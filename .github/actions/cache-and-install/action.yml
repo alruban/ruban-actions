@@ -1,0 +1,53 @@
+name: "Cache and install"
+
+branding:
+  icon: package
+  color: orange
+
+inputs:
+  build:
+    description: "Generate production build"
+    default: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v2.2.2
+      with:
+        version: 7
+
+    - name: Install Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+        cache: "pnpm"
+
+    - name: Install Rugby for Shopify CLI
+      if: ${{ inputs.build == 'true' }}
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: 3.1
+        bundler: "latest"
+
+    - name: Install dependencies
+      run: |
+        pnpm --prefer-offline --no-frozen-lockfile install
+        pnpm add --global @shopify/cli@3.44.1 @shopify/theme@3.44.1
+      shell: bash
+
+    - name: Tools cache
+      uses: actions/cache@v3
+      with:
+        path: ${{ github.workspace }}/node_modules/.cache/
+        key: tools-cache-${{ github.base_ref }}-${{ inputs.build }}
+        restore-keys: |
+          tools-cache-
+
+    - name: Generate production build
+      if: ${{ inputs.build == 'true' }}
+      run: pnpm run webpack:build
+      shell: bash

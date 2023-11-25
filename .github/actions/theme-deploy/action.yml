@@ -1,0 +1,20 @@
+name: "Theme deploy"
+
+branding:
+  icon: package
+  color: orange
+
+inputs:
+  SHOPIFY_PASSWORD:
+    description: "The Shopify store's private app password"
+    required: true
+  SHOPIFY_STORE:
+    description: "The shopify development store i.e. my-store.myshopify.com"
+    required: true
+  SHOPIFY_THEME_ID:
+    description: "The Shopify store's theme id"
+    required: true
+
+runs:
+  using: "node16"
+  main: "index.js"
