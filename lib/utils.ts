@@ -15,7 +15,7 @@ type Theme = {
 };
 
 const BASE_URL = "https://theme-kit-access.shopifyapps.com";
-const API_VERSION = "2023-01";
+const API_VERSION = "2024-04";
 
 export async function getStoreThemes(props: {
   shop: string;
@@ -26,12 +26,19 @@ export async function getStoreThemes(props: {
     {
       headers: {
         "X-Shopify-Access-Token": props.password,
-        "X-Shopify-Shop": props.shop,
+        "X-Shopify-Shop": getFullShopUrl(props.shop),
       },
     }
   );
 
-  const { themes } = (await body.json()) as { themes: Theme[] };
+  const { themes, errors } = (await body.json()) as {
+    themes: Theme[];
+    errors: unknown;
+  };
+
+  if (errors) {
+    throw new Error(JSON.stringify(errors));
+  }
 
   return themes;
 }
@@ -48,7 +55,7 @@ export async function createTheme(props: {
       method: "POST",
       headers: {
         "X-Shopify-Access-Token": props.password,
-        "X-Shopify-Shop": props.shop,
+        "X-Shopify-Shop": getFullShopUrl(props.shop),
       },
       body: JSON.stringify({
         theme: {
@@ -59,7 +66,14 @@ export async function createTheme(props: {
     }
   );
 
-  const { theme } = (await body.json()) as { theme: Theme };
+  const { theme, errors } = (await body.json()) as {
+    theme: Theme;
+    errors: unknown;
+  };
+
+  if (errors) {
+    throw new Error(JSON.stringify(errors));
+  }
 
   return theme;
 }
@@ -75,7 +89,7 @@ export async function deleteTheme(props: {
       method: "DELETE",
       headers: {
         "X-Shopify-Access-Token": props.password,
-        "X-Shopify-Shop": props.shop,
+        "X-Shopify-Shop": getFullShopUrl(props.shop),
       },
     }
   );
@@ -87,26 +101,41 @@ export async function deleteTheme(props: {
 
 export async function getManifestAsset(props: {
   asset: string;
+  assetFallback: string;
   password: string;
   shop: string;
   themeId: number | string;
 }) {
-  const { body } = await request(
-    `${BASE_URL}/cli/admin/api/${API_VERSION}/themes/${props.themeId}/assets.json?asset[key]=${props.asset}`,
-    {
-      headers: {
-        "X-Shopify-Access-Token": props.password,
-        "X-Shopify-Shop": props.shop,
-      },
-    }
-  );
+  const getAsset = (asset) =>
+    request(
+      `${BASE_URL}/cli/admin/api/${API_VERSION}/themes/${props.themeId}/assets.json?asset[key]=${asset}`,
+      {
+        headers: {
+          "X-Shopify-Access-Token": props.password,
+          "X-Shopify-Shop": getFullShopUrl(props.shop),
+        },
+      }
+    ).then((res) => res.body.json());
 
-  const { asset } = ((await body.json()) ?? {}) as {
+  const mainAsset = (await getAsset(props.asset)) as {
+    asset?: { value: string };
+  };
+  if (mainAsset?.asset) {
+    return JSON.parse(mainAsset.asset.value);
+  }
+
+  const fallbackAsset = (await getAsset(props.assetFallback)) as {
     asset?: { attachment: string };
   };
+  if (fallbackAsset?.asset) {
+    return JSON.parse(
+      Buffer.from(fallbackAsset.asset.attachment, "base64").toString("utf8")
+    );
+  }
 
-  if (!asset) return {};
-  return JSON.parse(Buffer.from(asset.attachment, "base64").toString("utf8"));
+  console.log("Manifest not found or cannot be retrieved");
+  console.log({ props, mainAsset, fallbackAsset });
+  return {};
 }
 
 export async function removeAssets(props: {
@@ -137,7 +166,7 @@ export async function removeAssets(props: {
         method: "DELETE",
         headers: {
           "X-Shopify-Access-Token": props.password,
-          "X-Shopify-Shop": props.shop,
+          "X-Shopify-Shop": getFullShopUrl(props.shop),
         },
       })
     );
@@ -217,4 +246,15 @@ export async function createGitHubComment(themeId: number) {
     core.debug(`[DEBUG] - Error while adding/updating comment`);
     core.setFailed(error.message);
   }
+}
+
+function getFullShopUrl(shop: string) {
+  if (shop.endsWith("myshopify.com")) {
+    return shop;
+  }
+  return shop + ".myshopify.com";
+}
+
+export function toCapitalize(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }

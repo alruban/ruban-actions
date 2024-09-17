@@ -6,9 +6,8 @@ import {
   getStoreThemes,
   logStep,
   createGitHubComment,
+  deleteTheme,
 } from "../../../lib/utils";
-
-let timeout;
 
 async function runAction() {
   if (!process.env.SHOPIFY_FLAG_PATH)
@@ -18,87 +17,108 @@ async function runAction() {
   if (!process.env.SHOPIFY_CLI_THEME_TOKEN)
     throw new Error("Missing [SHOPIFY_CLI_THEME_TOKEN] environment variable");
 
-  const themeName = `MTTD/Preview - ${process.env.GITHUB_HEAD_REF}`;
+  const isStaging = process.env.GITHUB_HEAD_REF === "staging";
+
+  const themeName = isStaging
+    ? "ALRUBAN/Preprod"
+    : `ALRUBAN/Preview - ${process.env.GITHUB_HEAD_REF}`;
 
   logStep("Check if preview theme already exists");
   const allThemes = await getStoreThemes({
     shop: process.env.SHOPIFY_FLAG_STORE,
     password: process.env.SHOPIFY_CLI_THEME_TOKEN,
   });
-
-  let previewTheme = allThemes.find((t) => t.name === themeName);
-  const ignoredPushFiles =
-    core
-      .getInput("IGNORED_FILES_PUSH")
-      .split(" ")
-      .map((pattern) => pattern && `--ignore=${pattern}`)
-      .filter(Boolean) ?? [];
-  const ignoredPullFiles =
-    core
-      .getInput("IGNORED_FILES_PULL")
-      .split(" ")
-      .map((pattern) => pattern && `--ignore=${pattern}`)
-      .filter(Boolean) ?? [];
-
-  core.debug(
-    JSON.stringify({
-      ignoredFiles: {
-        ignoredPullFiles: ignoredPullFiles,
-        ignoredPushFiles: ignoredPushFiles,
-      },
-    })
-  );
+  let previewTheme = allThemes.find((t) => t.name.startsWith(themeName));
 
   if (!previewTheme) {
-    logStep("Preview theme not found, creating new theme");
+    logStep("Creating new theme");
     previewTheme = await createTheme({
       shop: process.env.SHOPIFY_FLAG_STORE,
       password: process.env.SHOPIFY_CLI_THEME_TOKEN,
       themeName,
     });
+    console.log(previewTheme);
 
-    const tmpRoot = resolve(
-      process.env.SHOPIFY_FLAG_PATH,
-      "../dist-live-theme"
-    );
+    try {
+      const tmpRoot = resolve(
+        process.env.SHOPIFY_FLAG_PATH,
+        "../dist-live-theme"
+      );
 
-    logStep("Live sync: Pull");
-    await exec.exec(`pnpm shopify theme pull`, [
-      "--live",
-      "--only=sections/*",
-      "--only=templates/*",
-      "--only=*/*.json",
-      `--path=${tmpRoot}`,
-      ...ignoredPullFiles,
-    ]);
+      logStep("Live sync: Pull");
+      await exec.exec(`shopify theme pull`, [
+        "--stable",
+        process.env.SHOPIFY_SYNC_THEME_ID
+          ? `--theme=${process.env.SHOPIFY_SYNC_THEME_ID}`
+          : "--live",
+        ...(isStaging
+          ? [
+              // download whole theme
+            ]
+          : [
+              "--only=layout/*",
+              "--only=sections/*",
+              "--only=snippets/*",
+              "--only=templates/*",
+              "--only=*/*.json",
+              // Ignore translation related templates
+              "--ignore=*.context.*",
+            ]),
+        `--path=${tmpRoot}`,
+      ]);
 
-    timeout = setTimeout(() => {
-      throw new Error("Shopify's push action took too long, aborting.");
-    }, 1000 * 60 * 5); // 5 mins
+      logStep("Live sync: Push");
+      await exec.exec(`shopify theme push`, [
+        "--stable",
+        "--nodelete",
+        `--path=${tmpRoot}`,
+        `--theme=${previewTheme.id}`,
+      ]);
+    } catch (error) {
+      logStep("Unable to sync live theme, deleting preview theme");
+      await deleteTheme({
+        shop: process.env.SHOPIFY_FLAG_STORE,
+        password: process.env.SHOPIFY_CLI_THEME_TOKEN,
+        themeId: previewTheme.id,
+      });
+      console.error(error);
+    }
+  }
 
-    logStep("Live sync: Push");
-    await exec.exec(`pnpm shopify theme push`, [
-      "--nodelete",
-      `--path=${tmpRoot}`,
+  logStep("Update preview theme");
+  let cliOutput = "";
+  await exec.exec(
+    `shopify theme push`,
+    [
+      "--stable",
+      `--nodelete`,
+      `--json`,
       `--theme=${previewTheme.id}`,
+      "--ignore=config/settings_data.json",
+    ],
+    {
+      listeners: {
+        stdout: (data) => {
+          cliOutput += data.toString();
+        },
+      },
+    }
+  );
+  const { theme } = JSON.parse(cliOutput) as Record<string, any>;
+  logStep("Preview theme ready");
+  console.log(theme);
+
+  if (isStaging) {
+    await exec.exec(`shopify theme rename`, [
+      `--theme=${previewTheme.id}`,
+      `--name=ALRUBAN/Preprod | ${new Intl.DateTimeFormat("en-GB", {
+        dateStyle: "short",
+        timeStyle: "short",
+      }).format(new Date())}`,
     ]);
   }
 
-  clearTimeout(timeout);
-
-  timeout = setTimeout(() => {
-    throw new Error("Shopify's push action took too long, aborting.");
-  }, 1000 * 60 * 5); // 5 mins
-
-  logStep("Update preview theme");
-  await exec.exec(`pnpm shopify theme push`, [
-    `--nodelete`,
-    `--theme=${previewTheme.id}`,
-    "--ignore=config/settings_data.json",
-    ...ignoredPushFiles,
-  ]);
-
-  clearTimeout(timeout);
+  core.setOutput("preview_url", theme.preview_url.replace("https://", ""));
 
   logStep("Create github comment");
   await createGitHubComment(previewTheme.id);

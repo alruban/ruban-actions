@@ -1,0 +1,24 @@
+name: "💂‍♂️ Rebase Check"
+
+on: workflow_call
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    if: github.head_ref != 'staging'
+    steps:
+      - name: ⬇️ Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Rebase check
+        run: |
+          hash1=$(git show-ref -s origin ${{ github.base_ref }})
+          hash2=$(git merge-base origin/${{ github.base_ref }} origin/${{ github.head_ref }})
+          if [ "${hash1}" = "${hash2}" ]
+          then
+            echo "You have rebased, who knowws what that means."
+          else
+            echo "🚫 Please rebase your branch"
+            exit 1
+          fi

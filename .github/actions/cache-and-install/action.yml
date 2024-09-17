@@ -12,21 +12,15 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Checkout
-      uses: actions/checkout@v3
+    - name: ⬇️ Checkout
+      uses: actions/checkout@v4
 
-    - name: Install pnpm
-      uses: pnpm/action-setup@v2.2.2
+    - name: Install Bun
+      uses: oven-sh/setup-bun@v1
       with:
-        version: 7
+        bun-version: 1.1.13
 
-    - name: Install Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: 18
-        cache: "pnpm"
-
-    - name: Install Rugby for Shopify CLI
+    - name: Install Ruby for Shopify CLI
       if: ${{ inputs.build == 'true' }}
       uses: ruby/setup-ruby@v1
       with:
@@ -35,19 +29,19 @@ runs:
 
     - name: Install dependencies
       run: |
-        pnpm --prefer-offline --no-frozen-lockfile install
-        pnpm add --global @shopify/cli@3.44.1 @shopify/theme@3.44.1
+        bun install
+        bun add --global @shopify/cli @shopify/theme
       shell: bash
 
     - name: Tools cache
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ${{ github.workspace }}/node_modules/.cache/
-        key: tools-cache-${{ github.base_ref }}-${{ inputs.build }}
+        key: tools-cache-${{ github.base_ref }}
         restore-keys: |
           tools-cache-
 
     - name: Generate production build
       if: ${{ inputs.build == 'true' }}
-      run: pnpm run webpack:build
+      run: bun run build
       shell: bash
