@@ -7,7 +7,11 @@ async function runAction() {
   if (!process.env.SHOPIFY_CLI_THEME_TOKEN)
     throw new Error("Missing [SHOPIFY_CLI_THEME_TOKEN] environment variable");
 
-  const themeName = `MTTD/Preview - ${process.env.GITHUB_HEAD_REF}`;
+  const isStaging = process.env.GITHUB_HEAD_REF === "staging";
+
+  const themeName = isStaging
+    ? "ALRUBAN/Preprod"
+    : `ALRUBAN/Preview - ${process.env.GITHUB_HEAD_REF}`;
 
   logStep("Retrieve preview theme id");
   const allThemes = await getStoreThemes({
@@ -15,7 +19,7 @@ async function runAction() {
     password: process.env.SHOPIFY_CLI_THEME_TOKEN,
   });
 
-  const previewTheme = allThemes.find((t) => t.name === themeName);
+  const previewTheme = allThemes.find((t) => t.name.startsWith(themeName));
 
   if (!previewTheme) {
     core.notice(`Preview theme [${themeName}] not found. Skipping.`);

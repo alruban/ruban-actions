@@ -1,0 +1,112 @@
+name: "🔍 Preview"
+
+on:
+  workflow_call:
+    inputs:
+      preprod-preview:
+        type: boolean
+        required: false
+        default: true
+      config:
+        type: string
+        required: false
+        default: ${{ vars.SHOPIFY_PREVIEW }}
+
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+  BUILD_MANIFEST: assets/__manifest.json
+  BUILD_MANIFEST_OLD: assets/__manifest
+  SHOPIFY_CLI_TTY: 0
+  SHOPIFY_CLI_NO_ANALYTICS: true
+  SHOPIFY_FLAG_PATH: ${{ github.workspace }}/dist
+
+jobs:
+  condition:
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'preview') && (contains(github.head_ref, 'staging') && inputs.preprod-preview == true || true)
+    outputs:
+      type: ${{ steps.get-type.outputs.type }}
+      store: ${{ steps.get-config.outputs.store }}
+      password: ${{ steps.get-config.outputs.password }}
+      theme_id: ${{ steps.get-config.outputs.theme_id }}
+      name: ALRUBAN/Preview - ${{ github.head_ref }}
+    steps:
+      - name: Get type
+        id: get-type
+        if: ${{ github.actor != 'jira[bot]' }}
+        run: |
+          echo "type=${{ github.event.action }}" >> "$GITHUB_OUTPUT"
+      - name: Get config
+        id: get-config
+        run: |
+          echo 'Installing yj'
+          wget https://github.com/sclevine/yj/releases/download/v5.1.0/yj-linux-amd64 -O yj
+          chmod +x ./yj
+          echo 'Getting preview config'
+          config=$(
+            echo '${{ inputs.config }}' | ./yj -tj
+          )
+          store=$(
+            echo $config | jq '.store' | sed "s/\"//g"
+          )
+          password=$(
+            echo $config | jq '.password' | sed "s/\"//g"
+          )
+          theme_id=$(
+            echo $config | jq '.theme_id' | jq --raw-output 'select(type == "string")' | sed "s/\"//g"
+          )
+          echo "store=$store" >> $GITHUB_OUTPUT
+          echo "password=$password" >> $GITHUB_OUTPUT
+          echo "theme_id=$theme_id" >> $GITHUB_OUTPUT
+  create:
+    runs-on: ubuntu-latest
+    needs: condition
+    if: contains(fromJSON('["opened", "reopened", "edited", "synchronize", "labeled"]'), needs.condition.outputs.type)
+    environment:
+      name: ${{ needs.condition.outputs.name }}
+      url: https://${{ steps.create_preview.outputs.preview_url }}
+    steps:
+      - name: Prepare
+        uses: alruban/shopify-actions/.github/actions/cache-and-install@main
+        with:
+          build: true
+      - name: Update (+ create) preview theme
+        uses: alruban/shopify-actions/.github/actions/theme-preview-create@main
+        id: create_preview
+        env:
+          SHOPIFY_FLAG_STORE: "${{ needs.condition.outputs.store }}"
+          SHOPIFY_CLI_THEME_TOKEN: "${{ secrets[needs.condition.outputs.password] }}"
+          SHOPIFY_SYNC_THEME_ID: "${{ needs.condition.outputs.theme_id }}"
+        timeout-minutes: 15
+  delete:
+    runs-on: ubuntu-latest
+    needs: condition
+    if: contains(fromJSON('["closed"]'), needs.condition.outputs.type)
+    steps:
+      - name: Delete preview theme
+        uses: alruban/shopify-actions/.github/actions/theme-preview-delete@main
+        env:
+          SHOPIFY_FLAG_STORE: "${{ needs.condition.outputs.store }}"
+          SHOPIFY_CLI_THEME_TOKEN: "${{ secrets[needs.condition.outputs.password] }}"
+      - name: Delete preview deployment
+        run: |
+          uriSafeEnvName=$(
+            echo "${{ needs.condition.outputs.name }}" | jq -Rr @uri
+          )
+          gh api "repos/${{ github.repository }}/deployments?environment=$uriSafeEnvName" \
+            | jq -r ".[].id" \
+            | xargs -n 1 -I % sh -c "
+            gh api -X POST -F state=inactive repos/${{ github.repository }}/deployments/%/statuses
+            gh api -X DELETE repos/${{ github.repository }}/deployments/%
+          "
+      - name: Delete preview environment
+        run: |
+          uriSafeEnvName=$(
+            echo "${{ needs.condition.outputs.name }}" | jq -Rr @uri
+          )
+          curl -L \
+            -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.PREVIEW_PAT }}"\
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/${{ github.repository }}/environments/$uriSafeEnvName
