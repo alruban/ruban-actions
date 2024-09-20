@@ -1,5 +1,19 @@
 name: "Create or update preview theme"
 
+inputs:
+  SHOPIFY_PASSWORD:
+    description: "The Shopify store's private app password"
+    required: true
+  SHOPIFY_SHOP:
+    description: "The shopify development store i.e. my-store.myshopify.com"
+    required: true
+  IGNORED_FILES_PULL:
+    description: "List of files to ignore"
+    required: false
+  IGNORED_FILES_PUSH:
+    description: "List of files to ignore"
+    required: false
+
 runs:
-  using: "node20"
+  using: "node16"
   main: "index.js"

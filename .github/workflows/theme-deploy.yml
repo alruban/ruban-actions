@@ -1,64 +1,61 @@
-name: Deploy
-
 on:
   workflow_call:
-    inputs:
-      environment:
+    secrets:
+      PASSWORD:
         required: true
-        type: string
-      create-backup:
-        required: false
-        type: boolean
-        default: false
+      SHOP:
+        required: true
+      THEME_ID:
+        required: true
+
+env:
+  SHOPIFY_CLI_NO_ANALYTICS: true
+  BUILD_MANIFEST: assets/__manifest
+  SHOPIFY_FLAG_PATH: ${{ github.workspace }}/dist
 
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    steps:
-      - id: get_env_key
-        run: |
-          wget https://github.com/sclevine/yj/releases/download/v5.1.0/yj-linux-amd64 -O yj
-          chmod +x ./yj
-          env_key=$(
-            echo "SHOPIFY_${{ inputs.environment }}" | tr a-z A-Z
-          )
-          echo $env_key
-          echo "env_key=$env_key" >> $GITHUB_OUTPUT
-      - name: Create matrix
-        id: set-matrix
-        run: |
-          matrix=$((
-            echo '${{ vars[steps.get_env_key.outputs.env_key] }}' | ./yj -tj
-          ) | jq '.[]' | jq -n -c '.include |= [inputs]')
-          echo "matrix=$matrix" >> $GITHUB_OUTPUT
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
   deploy:
     runs-on: ubuntu-latest
-    needs: prepare
-    environment: ${{ inputs.environment }}
-    env:
-      ENVIRONMENT_NAME: ${{ inputs.environment }}
-      GITHUB_TOKEN: ${{ github.token }}
-      BUILD_MANIFEST: assets/__manifest.json
-      BUILD_MANIFEST_OLD: assets/__manifest
-      SHOPIFY_CLI_TTY: 0
-      SHOPIFY_CLI_NO_ANALYTICS: true
-      SHOPIFY_FLAG_PATH: ${{ github.workspace }}/dist
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
     steps:
+      - name: Create GitHub deployment
+        id: deployment
+        uses: altinukshini/deployment-action@releases/v1
+        with:
+          token: ${{ github.token }}
+          environment: production
+
       - name: Prepare
         uses: alruban/shopify-actions/.github/actions/cache-and-install@main
         with:
           build: true
-      - name: Deploy theme
-        uses: alruban/shopify-actions/.github/actions/theme-deploy@main
+
+      - name: Update deployment status (Inprogress)
+        uses: altinukshini/deployment-status@v1.0.1
         with:
-          create-backup: ${{ inputs.create-backup }}
+          token: ${{ github.token }}
+          state: "in_progress"
+          deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+          description: "Deploying code for branch: "
+
+      - name: Deploy theme
         env:
-          SHOPIFY_FLAG_STORE: "${{ matrix.store }}"
-          SHOPIFY_FLAG_THEME_ID: "${{ matrix.theme_id }}"
-          SHOPIFY_CLI_THEME_TOKEN: "${{ secrets[matrix.password] }}"
-        timeout-minutes: 30
+          SHOPIFY_FLAG_STORE: ${{ secrets.SHOP }}
+          SHOPIFY_FLAG_THEME_ID: ${{ secrets.THEME_ID }}
+          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.PASSWORD }}
+        uses: alruban/shopify-actions/.github/actions/theme-deploy@main
+
+      - name: Update deployment status (success)
+        if: ${{ success() }}
+        uses: altinukshini/deployment-status@v1.0.1
+        with:
+          token: ${{ github.token }}
+          state: "success"
+          deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+
+      - name: Update deployment status (failure)
+        if: ${{ failure() }}
+        uses: altinukshini/deployment-status@v1.0.1
+        with:
+          token: ${{ github.token }}
+          state: "failure"
+          deployment_id: ${{ steps.deployment.outputs.deployment_id }}

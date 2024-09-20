@@ -14,7 +14,7 @@ for (const actionEntry of actionEntries) {
     .build({
       bundle: true,
       entryPoints: [actionEntry],
-      minify: false,
+      minify: true,
       format: "cjs",
       outfile: dirname(actionEntry) + "/index.js",
       platform: "node",

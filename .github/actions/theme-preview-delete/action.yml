@@ -1,5 +1,13 @@
 name: "Delete theme preview"
 
+inputs:
+  SHOPIFY_PASSWORD:
+    description: "The Shopify store's private app password"
+    required: true
+  SHOPIFY_SHOP:
+    description: "The shopify development store i.e. my-store.myshopify.com"
+    required: true
+
 runs:
-  using: "node20"
+  using: "node16"
   main: "index.js"

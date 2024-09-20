@@ -1,0 +1,24 @@
+on:
+  workflow_call:
+    secrets:
+      PASSWORD:
+        required: true
+      SHOP:
+        required: true
+      IGNORED_FILES:
+        required: false
+
+env:
+  SHOPIFY_CLI_NO_ANALYTICS: true
+  BUILD_MANIFEST: assets/__manifest
+  SHOPIFY_FLAG_PATH: ${{ github.workspace }}/dist
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    env:
+      SHOPIFY_FLAG_STORE: ${{ secrets.SHOP }}
+      SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.PASSWORD }}
+    steps:
+      - name: Delete preview theme
+        uses: alruban/shopify-actions/.github/actions/theme-preview-delete@main
