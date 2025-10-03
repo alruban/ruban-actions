@@ -1,5 +1,0 @@
-name: "Delete theme preview"
-
-runs:
-  using: "node20"
-  main: "index.js"

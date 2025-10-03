@@ -1,9 +1,0 @@
-name: "Theme deploy"
-
-branding:
-  icon: package
-  color: orange
-
-runs:
-  using: "node20"
-  main: "index.js"

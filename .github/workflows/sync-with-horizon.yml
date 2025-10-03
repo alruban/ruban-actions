@@ -1,0 +1,382 @@
+name: Sync with Horizon
+run-name: Sync with Horizon
+
+on:
+  workflow_dispatch: # Allow manual trigger
+  workflow_call: # Allow other workflows to call this
+
+jobs:
+  horizon:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      - name: Check for New Horizon Release
+        run: |
+          # Get the latest version from Horizon (from commit messages)
+          # First fetch the latest commits
+          git remote add horizon https://github.com/shopify/horizon.git || true
+          git fetch horizon main
+
+          # Get recent commits from GitHub Actions and find one with a version
+          echo "Searching for version in recent GitHub Actions commits..."
+
+          # Look through the last 3 commits from GitHub Actions to find a version
+          LATEST_VERSION=""
+          for i in {1..3}; do
+            COMMIT_INFO=$(git log horizon/main -$i --format="%H|%an|%s")
+            COMMIT_AUTHOR=$(echo "$COMMIT_INFO" | cut -d'|' -f2)
+            COMMIT_MSG=$(echo "$COMMIT_INFO" | cut -d'|' -f3)
+
+            echo "Checking commit $i: $COMMIT_MSG (by $COMMIT_AUTHOR)"
+
+            # Extract version from "Horizon v[version]" format from any commit
+            VERSION=$(echo "$COMMIT_MSG" | grep -o "Horizon v[0-9]\+\.[0-9]\+\.[0-9]\+" | head -1 | sed 's/Horizon v//')
+
+            if [ -n "$VERSION" ]; then
+              LATEST_VERSION="v$VERSION"
+              echo "Found version $LATEST_VERSION in commit $i"
+              break
+            fi
+          done
+
+          if [ -z "$LATEST_VERSION" ]; then
+            echo "Could not find version in last 3 GitHub Actions commits"
+            exit 1
+          fi
+
+          echo "Extracted version: $LATEST_VERSION"
+          echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
+
+          # Check if a PR already exists for this version
+          BRANCH_NAME="sync/horizon-$LATEST_VERSION"
+          if git ls-remote --heads origin $BRANCH_NAME | grep -q $BRANCH_NAME; then
+            echo "Branch $BRANCH_NAME already exists - PR likely already created for version $LATEST_VERSION"
+            echo "SKIP_SYNC=true" >> $GITHUB_ENV
+            echo "SKIP_REASON=pr_exists" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          # Get the current version from this repository (from file)
+          if [ -f ".horizon-version.txt" ]; then
+            CURRENT_VERSION=$(cat .horizon-version.txt)
+            echo "Current repository version: $CURRENT_VERSION"
+            echo "Latest Horizon version: $LATEST_VERSION"
+
+            # Compare versions
+            if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+              echo "No new release detected. Current version: $LATEST_VERSION"
+              echo "SKIP_SYNC=true" >> $GITHUB_ENV
+              echo "SKIP_REASON=version_match" >> $GITHUB_ENV
+              exit 0
+            else
+              echo "New release detected! Updating from $CURRENT_VERSION to $LATEST_VERSION"
+            fi
+          else
+            echo "No .horizon-version.txt file found. Proceeding with sync for version: $LATEST_VERSION"
+          fi
+
+      - name: Fetch latest Horizon
+        run: |
+          # Horizon remote already added in previous step, just fetch latest
+          git fetch horizon main
+
+      - name: Sync Horizon files
+        if: env.SKIP_SYNC != 'true'
+        run: |
+          echo "Create a branch with the latest version in it's name..."
+          BRANCH_NAME="sync/horizon-${{ env.LATEST_VERSION }}"
+
+          echo "Create and checkout the branch..."
+          git checkout -b $BRANCH_NAME
+
+          echo "---------------- !!Handle Settings Schema Syncing!! ----------------"
+          echo "Syncing settings schema files while preserving custom rbn_ objects..."
+
+          # Check current settings schema for rbn_ objects BEFORE copying Horizon files
+          if [ -f "config/settings_schema.json" ]; then
+            echo "Current settings schema exists, checking for rbn_ objects before Horizon sync..."
+            # Check for rbn_ objects in current file before backup
+            if command -v jq >/dev/null 2>&1; then
+              echo "Checking current file for rbn_ objects..."
+
+              CURRENT_RBN_IDS=$(jq -r '.[1:] | .[] | select(type == "object" and has("settings")) | .settings[]? | .id? | select(type == "string" and startswith("rbn_"))' "config/settings_schema.json" 2>&1 || echo "No rbn_ settings found in current file")
+              echo "Current file rbn_ setting IDs: $CURRENT_RBN_IDS"
+
+              # If we found rbn_ settings, extract the full objects
+              if [ -n "$CURRENT_RBN_IDS" ] && [ "$CURRENT_RBN_IDS" != "No rbn_ settings found in current file" ]; then
+                echo "Found rbn_ settings in current file, extracting objects..."
+                RBN_OBJECTS=$(jq -r '[.[1:] | .[] | select(type == "object" and has("settings")) | select(.settings | map(.id? | select(type == "string" and startswith("rbn_"))) | length > 0)]' "config/settings_schema.json" 2>&1 || echo "[]")
+                echo "RBN_OBJECTS extracted: $RBN_OBJECTS"
+              else
+                echo "No rbn_ settings found in current file"
+                RBN_OBJECTS="[]"
+              fi
+            fi
+            cp "config/settings_schema.json" "config/settings_schema.json.backup"
+            echo "Backed up current settings schema"
+          fi
+
+          echo "Copy specific Horizon directories (.cursor/ assets/ blocks/ config/ layout/ sections/ snippets/ templates/)..."
+          git checkout horizon/main -- .cursor/ assets/ blocks/ config/ layout/ sections/ snippets/ templates/
+
+          echo "---------------- !!Handle Locale Syncing!! ----------------"
+          echo "Syncing locale files while preserving custom keys..."
+
+          echo "Define locale files to process ("locales/en.default.json" "locales/en.default.schema.json")..."
+          LOCALE_FILES=("locales/en.default.json" "locales/en.default.schema.json")
+
+          echo "Process each locale file..."
+          for file in "${LOCALE_FILES[@]}"; do
+            echo "Processing $file..."
+
+            # Backup current file if it exists
+            if [ -f "$file" ]; then
+              cp "$file" "$file.backup"
+            fi
+
+            # Copy Horizon file
+            git checkout horizon/main -- "$file"
+
+            # Restore custom keys from backup if backup exists
+            if [ -f "$file.backup" ]; then
+              echo "Restoring custom keys from $file backup..."
+
+                # Look for custom keys (like "rbn_custom") in the backup file
+                if grep -q '"rbn_custom"' "$file.backup"; then
+                  echo "Found 'rbn_custom' key in backup, preserving it..."
+
+                  # Create a temporary file for the merged result
+                  TEMP_FILE=$(mktemp)
+
+                  # Copy the Horizon file content to temp file
+                  cp "$file" "$TEMP_FILE"
+
+                  # Find the opening brace and insert rbn_custom after it
+                  # First, find the line number of the opening brace
+                  OPENING_BRACE_LINE=$(grep -n "^[[:space:]]*{[[:space:]]*$" "$TEMP_FILE" | head -1 | cut -d: -f1)
+
+                  if [ -n "$OPENING_BRACE_LINE" ]; then
+                    # Extract the rbn_custom section from backup (including the key and opening brace)
+                    # Use a more robust extraction that handles the entire rbn_custom object
+                    RBN_START=$(grep -n '"rbn_custom"' "$file.backup" | head -1 | cut -d: -f1)
+
+                    if [ -n "$RBN_START" ]; then
+                      # Extract from the rbn_custom line to the end, then find the closing brace
+                      RBN_CONTENT=$(tail -n +$RBN_START "$file.backup")
+
+                      # Find where the rbn_custom object ends (count braces)
+                      BRACE_COUNT=0
+                      RBN_SECTION=""
+                      IFS=$'\n'
+                      for line in $RBN_CONTENT; do
+                        RBN_SECTION="$RBN_SECTION$line"$'\n'
+                        # Count opening and closing braces
+                        OPENING=$(echo "$line" | grep -o '{' | wc -l)
+                        CLOSING=$(echo "$line" | grep -o '}' | wc -l)
+                        BRACE_COUNT=$((BRACE_COUNT + OPENING - CLOSING))
+
+                        # If we've closed all braces, we're done
+                        if [ $BRACE_COUNT -eq 0 ]; then
+                          break
+                        fi
+                      done
+                      unset IFS
+
+                      if [ -n "$RBN_SECTION" ]; then
+                        # Create a temporary file with the rbn_custom section
+                        RBN_TEMP=$(mktemp)
+                        echo "$RBN_SECTION" >> "$RBN_TEMP"
+
+                        # Insert rbn_custom section after the opening brace using awk
+                        awk -v line="$OPENING_BRACE_LINE" -v rbn_file="$RBN_TEMP" '
+                          { print }
+                          NR == line {
+                            # Read and print the rbn_custom content
+                            while ((getline line < rbn_file) > 0) {
+                              print line
+                            }
+                            close(rbn_file)
+                          }
+                        ' "$TEMP_FILE" > "$file"
+
+                        # Clean up temporary files
+                        rm "$TEMP_FILE" "$RBN_TEMP"
+                        echo "Successfully merged rbn_custom section into $file"
+                      else
+                        rm "$TEMP_FILE"
+                        echo "Could not extract rbn_custom section from backup"
+                      fi
+                    else
+                      rm "$TEMP_FILE"
+                      echo "Could not find rbn_custom key in backup"
+                    fi
+                  else
+                    rm "$TEMP_FILE"
+                    echo "Could not find opening brace in $file"
+                  fi
+                fi
+
+              rm "$file.backup"
+            fi
+          done
+
+          echo "---------------- !!Handle 'rbn-assets' Syncing!! ----------------"
+          # Process layout files to add custom rbn-assets renders
+          echo "Processing layout files to add custom rbn-assets renders..."
+          if [ -d "layout" ]; then
+            for layout_file in layout/*.liquid; do
+              if [ -f "$layout_file" ]; then
+                echo "Processing layout file: $layout_file"
+
+                # Check if file contains </head> tag
+                if grep -q "</head>" "$layout_file"; then
+                  echo "Found </head> tag in $layout_file, adding rbn-assets renders..."
+
+                  # Create a temporary file
+                  TEMP_LAYOUT=$(mktemp)
+
+                  # Insert the rbn-assets lines before </head> using awk
+                  awk '
+                    /<\/head>/ {
+                      print "    {%- render '\''rbn-assets'\'' with '\''/_src/css/main.css'\'', preload_stylesheet: true -%}"
+                      print "    {%- render '\''rbn-assets'\'' with '\''/_src/js/index.ts'\'' -%}"
+                      print $0
+                      next
+                    }
+                    { print }
+                  ' "$layout_file" > "$TEMP_LAYOUT"
+
+                  # Replace the original file
+                  mv "$TEMP_LAYOUT" "$layout_file"
+                  echo "Successfully added rbn-assets renders to $layout_file"
+                else
+                  echo "No </head> tag found in $layout_file, skipping..."
+                fi
+              fi
+            done
+          else
+            echo "No layout directory found, skipping layout file processing..."
+          fi
+
+          # Copy Horizon settings schema and restore rbn_ objects
+          git checkout horizon/main -- config/settings_schema.json
+          echo "Copied Horizon settings schema"
+
+          # Restore custom rbn_ objects if we found any
+          if [ -n "$RBN_OBJECTS" ] && [ "$RBN_OBJECTS" != "[]" ] && [ "$RBN_OBJECTS" != "No rbn_ settings found in current file" ]; then
+            echo "Restoring custom rbn_ objects..."
+
+            if command -v jq >/dev/null 2>&1; then
+              # Merge rbn_ objects into the new schema
+              if jq --argjson rbn_objects "$RBN_OBJECTS" '. + $rbn_objects' "config/settings_schema.json" > "config/settings_schema.json.temp" 2>&1; then
+                mv "config/settings_schema.json.temp" "config/settings_schema.json"
+                echo "Successfully merged custom rbn_ objects into settings schema"
+              else
+                echo "Failed to merge rbn_ objects, keeping original schema"
+                rm -f "config/settings_schema.json.temp"
+              fi
+            else
+              echo "jq not available, skipping rbn_ object preservation"
+            fi
+          else
+            echo "No rbn_ objects found to restore"
+          fi
+
+          echo "Successfully synced settings schema files from Horizon"
+
+          # Clean up backup file
+          if [ -f "config/settings_schema.json.backup" ]; then
+            rm "config/settings_schema.json.backup"
+            echo "Cleaned up settings schema backup file"
+          fi
+
+          echo "---------------- !!Complete Syncing!! ----------------"
+
+          # Update the version file
+          echo "${{ env.LATEST_VERSION }}" > .horizon-version.txt
+
+          # Stage specific changes (exclude node_modules and other build artifacts)
+          git add .
+
+          # Check if there are any changes
+          if git diff --staged --quiet; then
+            echo "::notice::No changes detected - workflow completed successfully"
+            # Set a flag to indicate no changes were found
+            echo "NO_CHANGES=true" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          # Commit all changes together
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git commit -m "Sync with Horizon ${{ env.LATEST_VERSION }}"
+
+          # Push the branch
+          git push origin $BRANCH_NAME
+
+          # Set the branch name for the PR creation step
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+
+      - name: Create Pull Request
+        if: env.NO_CHANGES != 'true' && env.SKIP_SYNC != 'true'
+        run: |
+          # Get release notes from Horizon
+          RELEASE_NOTES=$(curl -s https://raw.githubusercontent.com/shopify/horizon/main/release-notes.md || echo "Release notes not available")
+
+          # Create PR using GitHub CLI
+          gh pr create \
+            --title "Sync with Horizon ${{ env.LATEST_VERSION }}" \
+            --body "This PR syncs the framework with the latest Horizon theme updates.
+
+          Changes:
+          - Updated Horizon theme files
+          - Preserved custom framework files
+          - Updated version tracking to ${{ env.LATEST_VERSION }}
+
+          ## Release Notes
+          \`\`\`
+          $RELEASE_NOTES
+          \`\`\`
+
+          Please review the changes before merging." \
+            --base production \
+            --head ${{ env.BRANCH_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: No Changes Detected
+        if: env.NO_CHANGES == 'true'
+        run: |
+          echo "✅ No changes detected - repository is already up to date with Horizon ${{ env.LATEST_VERSION }}"
+          echo "Workflow completed successfully with no action needed."
+
+      - name: PR Already Exists
+        if: env.SKIP_SYNC == 'true' && env.SKIP_REASON == 'pr_exists'
+        run: |
+          echo "✅ PR already exists for Horizon ${{ env.LATEST_VERSION }}"
+          echo "Branch sync/horizon-${{ env.LATEST_VERSION }} already exists - skipping sync process"
+          echo "Workflow completed successfully with no action needed."
+
+      - name: Version Already Up to Date
+        if: env.SKIP_SYNC == 'true' && env.SKIP_REASON == 'version_match'
+        run: |
+          echo "✅ Repository is already up to date with Horizon ${{ env.LATEST_VERSION }}"
+          echo "Current version matches latest Horizon version - no sync needed"
+          echo "Workflow completed successfully with no action needed."

@@ -6,7 +6,7 @@ branding:
 
 inputs:
   build:
-    description: "Generate production build"
+    description: "Generate Production Build"
     default: false
 
 runs:
@@ -27,10 +27,10 @@ runs:
         ruby-version: 3.1
         bundler: "latest"
 
-    - name: Install dependencies
+    - name: Install Dependencies
       run: |
         bun install
-        bun add --global @shopify/cli @shopify/theme
+        bun add --global @shopify/cli@3.68.0
       shell: bash
 
     - name: Tools cache
@@ -41,7 +41,7 @@ runs:
         restore-keys: |
           tools-cache-
 
-    - name: Generate production build
+    - name: Generate Production Build
       if: ${{ inputs.build == 'true' }}
       run: bun run build
       shell: bash

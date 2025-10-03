@@ -1,4 +1,5 @@
-name: "👮 Lint"
+name: "👮 Lint (Global)"
+run-name: "👮 Lint (Global)"
 
 on: workflow_call
 
@@ -7,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Prepare
-        uses: alruban/shopify-actions/.github/actions/cache-and-install@main
+        uses: Juno-Ecommerce/.github/.github/actions/cache-and-install@main
         with:
           build: true
       - name: Remove quotes from lint:css command
