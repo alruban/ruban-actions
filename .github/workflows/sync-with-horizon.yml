@@ -13,6 +13,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -329,7 +330,7 @@ jobs:
           git commit -m "Sync with Horizon ${{ env.LATEST_VERSION }}"
 
           # Push the branch
-          git push origin $BRANCH_NAME
+          git push https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }}.git $BRANCH_NAME
 
           # Set the branch name for the PR creation step
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
@@ -359,7 +360,7 @@ jobs:
             --base production \
             --head ${{ env.BRANCH_NAME }}
         env:
-          PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: No Changes Detected
         if: env.NO_CHANGES == 'true'
