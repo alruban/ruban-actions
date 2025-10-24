@@ -329,8 +329,12 @@ jobs:
           git config --local user.name "GitHub Action"
           git commit -m "Sync with Horizon ${{ env.LATEST_VERSION }}"
 
+          # Configure git credentials for push
+          git config --local credential.helper store
+          echo "https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com" > ~/.git-credentials
+
           # Push the branch
-          git push https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }}.git $BRANCH_NAME
+          git push origin $BRANCH_NAME
 
           # Set the branch name for the PR creation step
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
