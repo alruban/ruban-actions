@@ -4,6 +4,9 @@ run-name: Sync with Horizon
 on:
   workflow_dispatch: # Allow manual trigger
   workflow_call: # Allow other workflows to call this
+    secrets:
+      PERSONAL_ACCESS_TOKEN:
+        required: true
 
 jobs:
   horizon:
@@ -12,7 +15,8 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -328,6 +332,10 @@ jobs:
           git config --local user.name "GitHub Action"
           git commit -m "Sync with Horizon ${{ env.LATEST_VERSION }}"
 
+          # Configure git credentials for push
+          git config --local credential.helper store
+          echo "https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com" > ~/.git-credentials
+
           # Push the branch
           git push origin $BRANCH_NAME
 
@@ -359,7 +367,7 @@ jobs:
             --base production \
             --head ${{ env.BRANCH_NAME }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: No Changes Detected
         if: env.NO_CHANGES == 'true'
