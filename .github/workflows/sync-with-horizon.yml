@@ -4,16 +4,19 @@ run-name: Sync with Horizon
 on:
   workflow_dispatch: # Allow manual trigger
   workflow_call: # Allow other workflows to call this
+    secrets:
+      PERSONAL_ACCESS_TOKEN:
+        required: true
 
 jobs:
   horizon:
-    if: github.repository == 'alruban/ruban-theme'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -25,10 +28,10 @@ jobs:
         with:
           version: latest
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: pnpm install
 
-      - name: Check for new Horizon release
+      - name: Check for New Horizon Release
         run: |
           # Get the latest version from Horizon (from commit messages)
           # First fetch the latest commits
@@ -108,26 +111,26 @@ jobs:
           git checkout -b $BRANCH_NAME
 
           echo "---------------- !!Handle Settings Schema Syncing!! ----------------"
-          echo "Syncing settings schema files while preserving custom tyz_ objects..."
+          echo "Syncing settings schema files while preserving custom rbn_ objects..."
 
-          # Check current settings schema for tyz_ objects BEFORE copying Horizon files
+          # Check current settings schema for rbn_ objects BEFORE copying Horizon files
           if [ -f "config/settings_schema.json" ]; then
-            echo "Current settings schema exists, checking for tyz_ objects before Horizon sync..."
-            # Check for tyz_ objects in current file before backup
+            echo "Current settings schema exists, checking for rbn_ objects before Horizon sync..."
+            # Check for rbn_ objects in current file before backup
             if command -v jq >/dev/null 2>&1; then
-              echo "Checking current file for tyz_ objects..."
+              echo "Checking current file for rbn_ objects..."
 
-              CURRENT_TYZ_IDS=$(jq -r '.[1:] | .[] | select(type == "object" and has("settings")) | .settings[]? | .id? | select(type == "string" and startswith("tyz_"))' "config/settings_schema.json" 2>&1 || echo "No tyz_ settings found in current file")
-              echo "Current file tyz_ setting IDs: $CURRENT_TYZ_IDS"
+              CURRENT_RBN_IDS=$(jq -r '.[1:] | .[] | select(type == "object" and has("settings")) | .settings[]? | .id? | select(type == "string" and startswith("rbn_"))' "config/settings_schema.json" 2>&1 || echo "No rbn_ settings found in current file")
+              echo "Current file rbn_ setting IDs: $CURRENT_RBN_IDS"
 
-              # If we found tyz_ settings, extract the full objects
-              if [ -n "$CURRENT_TYZ_IDS" ] && [ "$CURRENT_TYZ_IDS" != "No tyz_ settings found in current file" ]; then
-                echo "Found tyz_ settings in current file, extracting objects..."
-                TYZ_OBJECTS=$(jq -r '[.[1:] | .[] | select(type == "object" and has("settings")) | select(.settings | map(.id? | select(type == "string" and startswith("tyz_"))) | length > 0)]' "config/settings_schema.json" 2>&1 || echo "[]")
-                echo "TYZ_OBJECTS extracted: $TYZ_OBJECTS"
+              # If we found rbn_ settings, extract the full objects
+              if [ -n "$CURRENT_RBN_IDS" ] && [ "$CURRENT_RBN_IDS" != "No rbn_ settings found in current file" ]; then
+                echo "Found rbn_ settings in current file, extracting objects..."
+                RBN_OBJECTS=$(jq -r '[.[1:] | .[] | select(type == "object" and has("settings")) | select(.settings | map(.id? | select(type == "string" and startswith("rbn_"))) | length > 0)]' "config/settings_schema.json" 2>&1 || echo "[]")
+                echo "RBN_OBJECTS extracted: $RBN_OBJECTS"
               else
-                echo "No tyz_ settings found in current file"
-                TYZ_OBJECTS="[]"
+                echo "No rbn_ settings found in current file"
+                RBN_OBJECTS="[]"
               fi
             fi
             cp "config/settings_schema.json" "config/settings_schema.json.backup"
@@ -159,9 +162,9 @@ jobs:
             if [ -f "$file.backup" ]; then
               echo "Restoring custom keys from $file backup..."
 
-                # Look for custom keys (like "rbn") in the backup file
-                if grep -q '"rbn"' "$file.backup"; then
-                  echo "Found 'rbn' key in backup, preserving it..."
+                # Look for custom keys (like "rbn_custom") in the backup file
+                if grep -q '"rbn_custom"' "$file.backup"; then
+                  echo "Found 'rbn_custom' key in backup, preserving it..."
 
                   # Create a temporary file for the merged result
                   TEMP_FILE=$(mktemp)
@@ -169,20 +172,20 @@ jobs:
                   # Copy the Horizon file content to temp file
                   cp "$file" "$TEMP_FILE"
 
-                  # Find the opening brace and insert rbn after it
+                  # Find the opening brace and insert rbn_custom after it
                   # First, find the line number of the opening brace
                   OPENING_BRACE_LINE=$(grep -n "^[[:space:]]*{[[:space:]]*$" "$TEMP_FILE" | head -1 | cut -d: -f1)
 
                   if [ -n "$OPENING_BRACE_LINE" ]; then
-                    # Extract the rbn section from backup (including the key and opening brace)
-                    # Use a more robust extraction that handles the entire rbn object
-                    RBN_START=$(grep -n '"rbn"' "$file.backup" | head -1 | cut -d: -f1)
+                    # Extract the rbn_custom section from backup (including the key and opening brace)
+                    # Use a more robust extraction that handles the entire rbn_custom object
+                    RBN_START=$(grep -n '"rbn_custom"' "$file.backup" | head -1 | cut -d: -f1)
 
                     if [ -n "$RBN_START" ]; then
-                      # Extract from the rbn line to the end, then find the closing brace
+                      # Extract from the rbn_custom line to the end, then find the closing brace
                       RBN_CONTENT=$(tail -n +$RBN_START "$file.backup")
 
-                      # Find where the rbn object ends (count braces)
+                      # Find where the rbn_custom object ends (count braces)
                       BRACE_COUNT=0
                       RBN_SECTION=""
                       IFS=$'\n'
@@ -201,15 +204,15 @@ jobs:
                       unset IFS
 
                       if [ -n "$RBN_SECTION" ]; then
-                        # Create a temporary file with the rbn section
+                        # Create a temporary file with the rbn_custom section
                         RBN_TEMP=$(mktemp)
                         echo "$RBN_SECTION" >> "$RBN_TEMP"
 
-                        # Insert rbn section after the opening brace using awk
+                        # Insert rbn_custom section after the opening brace using awk
                         awk -v line="$OPENING_BRACE_LINE" -v rbn_file="$RBN_TEMP" '
                           { print }
                           NR == line {
-                            # Read and print the rbn content
+                            # Read and print the rbn_custom content
                             while ((getline line < rbn_file) > 0) {
                               print line
                             }
@@ -219,14 +222,14 @@ jobs:
 
                         # Clean up temporary files
                         rm "$TEMP_FILE" "$RBN_TEMP"
-                        echo "Successfully merged rbn section into $file"
+                        echo "Successfully merged rbn_custom section into $file"
                       else
                         rm "$TEMP_FILE"
-                        echo "Could not extract rbn section from backup"
+                        echo "Could not extract rbn_custom section from backup"
                       fi
                     else
                       rm "$TEMP_FILE"
-                      echo "Could not find rbn key in backup"
+                      echo "Could not find rbn_custom key in backup"
                     fi
                   else
                     rm "$TEMP_FILE"
@@ -276,28 +279,28 @@ jobs:
             echo "No layout directory found, skipping layout file processing..."
           fi
 
-          # Copy Horizon settings schema and restore tyz_ objects
+          # Copy Horizon settings schema and restore rbn_ objects
           git checkout horizon/main -- config/settings_schema.json
           echo "Copied Horizon settings schema"
 
-          # Restore custom tyz_ objects if we found any
-          if [ -n "$TYZ_OBJECTS" ] && [ "$TYZ_OBJECTS" != "[]" ] && [ "$TYZ_OBJECTS" != "No tyz_ settings found in current file" ]; then
-            echo "Restoring custom tyz_ objects..."
+          # Restore custom rbn_ objects if we found any
+          if [ -n "$RBN_OBJECTS" ] && [ "$RBN_OBJECTS" != "[]" ] && [ "$RBN_OBJECTS" != "No rbn_ settings found in current file" ]; then
+            echo "Restoring custom rbn_ objects..."
 
             if command -v jq >/dev/null 2>&1; then
-              # Merge tyz_ objects into the new schema
-              if jq --argjson tyz_objects "$TYZ_OBJECTS" '. + $tyz_objects' "config/settings_schema.json" > "config/settings_schema.json.temp" 2>&1; then
+              # Merge rbn_ objects into the new schema
+              if jq --argjson rbn_objects "$RBN_OBJECTS" '. + $rbn_objects' "config/settings_schema.json" > "config/settings_schema.json.temp" 2>&1; then
                 mv "config/settings_schema.json.temp" "config/settings_schema.json"
-                echo "Successfully merged custom tyz_ objects into settings schema"
+                echo "Successfully merged custom rbn_ objects into settings schema"
               else
-                echo "Failed to merge tyz_ objects, keeping original schema"
+                echo "Failed to merge rbn_ objects, keeping original schema"
                 rm -f "config/settings_schema.json.temp"
               fi
             else
-              echo "jq not available, skipping tyz_ object preservation"
+              echo "jq not available, skipping rbn_ object preservation"
             fi
           else
-            echo "No tyz_ objects found to restore"
+            echo "No rbn_ objects found to restore"
           fi
 
           echo "Successfully synced settings schema files from Horizon"
@@ -328,6 +331,10 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git commit -m "Sync with Horizon ${{ env.LATEST_VERSION }}"
+
+          # Configure git credentials for push
+          git config --local credential.helper store
+          echo "https://${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com" > ~/.git-credentials
 
           # Push the branch
           git push origin $BRANCH_NAME
@@ -360,7 +367,7 @@ jobs:
             --base production \
             --head ${{ env.BRANCH_NAME }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: No Changes Detected
         if: env.NO_CHANGES == 'true'
