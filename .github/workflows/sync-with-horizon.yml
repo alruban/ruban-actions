@@ -23,30 +23,10 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
-
-      - name: Get pnpm store directory
-        id: pnpm-cache
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+          version: latest
 
       - name: Install dependencies
-        run: |
-          for i in 1 2 3; do
-            echo "Attempt $i of 3: pnpm install"
-            pnpm install && break
-            if [ $i -eq 3 ]; then exit 1; fi
-            echo "Retrying in 15 seconds..."
-            sleep 15
-          done
+        run: pnpm install
 
       - name: Check for new Horizon release
         run: |
@@ -128,26 +108,26 @@ jobs:
           git checkout -b $BRANCH_NAME
 
           echo "---------------- !!Handle Settings Schema Syncing!! ----------------"
-          echo "Syncing settings schema files while preserving custom rbn_ objects..."
+          echo "Syncing settings schema files while preserving custom tyz_ objects..."
 
-          # Check current settings schema for rbn_ objects BEFORE copying Horizon files
+          # Check current settings schema for tyz_ objects BEFORE copying Horizon files
           if [ -f "config/settings_schema.json" ]; then
-            echo "Current settings schema exists, checking for rbn_ objects before Horizon sync..."
-            # Check for rbn_ objects in current file before backup
+            echo "Current settings schema exists, checking for tyz_ objects before Horizon sync..."
+            # Check for tyz_ objects in current file before backup
             if command -v jq >/dev/null 2>&1; then
-              echo "Checking current file for rbn_ objects..."
+              echo "Checking current file for tyz_ objects..."
 
-              CURRENT_RBN_IDS=$(jq -r '.[1:] | .[] | select(type == "object" and has("settings")) | .settings[]? | .id? | select(type == "string" and startswith("rbn_"))' "config/settings_schema.json" 2>&1 || echo "No rbn_ settings found in current file")
-              echo "Current file rbn_ setting IDs: $CURRENT_RBN_IDS"
+              CURRENT_TYZ_IDS=$(jq -r '.[1:] | .[] | select(type == "object" and has("settings")) | .settings[]? | .id? | select(type == "string" and startswith("tyz_"))' "config/settings_schema.json" 2>&1 || echo "No tyz_ settings found in current file")
+              echo "Current file tyz_ setting IDs: $CURRENT_TYZ_IDS"
 
-              # If we found rbn_ settings, extract the full objects
-              if [ -n "$CURRENT_RBN_IDS" ] && [ "$CURRENT_RBN_IDS" != "No rbn_ settings found in current file" ]; then
-                echo "Found rbn_ settings in current file, extracting objects..."
-                RBN_OBJECTS=$(jq -r '[.[1:] | .[] | select(type == "object" and has("settings")) | select(.settings | map(.id? | select(type == "string" and startswith("rbn_"))) | length > 0)]' "config/settings_schema.json" 2>&1 || echo "[]")
-                echo "RBN_OBJECTS extracted: $RBN_OBJECTS"
+              # If we found tyz_ settings, extract the full objects
+              if [ -n "$CURRENT_TYZ_IDS" ] && [ "$CURRENT_TYZ_IDS" != "No tyz_ settings found in current file" ]; then
+                echo "Found tyz_ settings in current file, extracting objects..."
+                TYZ_OBJECTS=$(jq -r '[.[1:] | .[] | select(type == "object" and has("settings")) | select(.settings | map(.id? | select(type == "string" and startswith("tyz_"))) | length > 0)]' "config/settings_schema.json" 2>&1 || echo "[]")
+                echo "TYZ_OBJECTS extracted: $TYZ_OBJECTS"
               else
-                echo "No rbn_ settings found in current file"
-                RBN_OBJECTS="[]"
+                echo "No tyz_ settings found in current file"
+                TYZ_OBJECTS="[]"
               fi
             fi
             cp "config/settings_schema.json" "config/settings_schema.json.backup"
@@ -296,28 +276,28 @@ jobs:
             echo "No layout directory found, skipping layout file processing..."
           fi
 
-          # Copy Horizon settings schema and restore rbn_ objects
+          # Copy Horizon settings schema and restore tyz_ objects
           git checkout horizon/main -- config/settings_schema.json
           echo "Copied Horizon settings schema"
 
-          # Restore custom rbn_ objects if we found any
-          if [ -n "$RBN_OBJECTS" ] && [ "$RBN_OBJECTS" != "[]" ] && [ "$RBN_OBJECTS" != "No rbn_ settings found in current file" ]; then
-            echo "Restoring custom rbn_ objects..."
+          # Restore custom tyz_ objects if we found any
+          if [ -n "$TYZ_OBJECTS" ] && [ "$TYZ_OBJECTS" != "[]" ] && [ "$TYZ_OBJECTS" != "No tyz_ settings found in current file" ]; then
+            echo "Restoring custom tyz_ objects..."
 
             if command -v jq >/dev/null 2>&1; then
-              # Merge rbn_ objects into the new schema
-              if jq --argjson rbn_objects "$RBN_OBJECTS" '. + $rbn_objects' "config/settings_schema.json" > "config/settings_schema.json.temp" 2>&1; then
+              # Merge tyz_ objects into the new schema
+              if jq --argjson tyz_objects "$TYZ_OBJECTS" '. + $tyz_objects' "config/settings_schema.json" > "config/settings_schema.json.temp" 2>&1; then
                 mv "config/settings_schema.json.temp" "config/settings_schema.json"
-                echo "Successfully merged custom rbn_ objects into settings schema"
+                echo "Successfully merged custom tyz_ objects into settings schema"
               else
-                echo "Failed to merge rbn_ objects, keeping original schema"
+                echo "Failed to merge tyz_ objects, keeping original schema"
                 rm -f "config/settings_schema.json.temp"
               fi
             else
-              echo "jq not available, skipping rbn_ object preservation"
+              echo "jq not available, skipping tyz_ object preservation"
             fi
           else
-            echo "No rbn_ objects found to restore"
+            echo "No tyz_ objects found to restore"
           fi
 
           echo "Successfully synced settings schema files from Horizon"
