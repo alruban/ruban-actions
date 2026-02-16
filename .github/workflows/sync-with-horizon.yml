@@ -39,6 +39,7 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Install dependencies
+        # Retries handle transient ERR_PNPM_TARBALL_INTEGRITY errors in GitHub Actions
         run: |
           for i in 1 2 3; do
             echo "Attempt $i of 3: pnpm install"
